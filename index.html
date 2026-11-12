@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>نظام تسجيل الحضور بالوجه</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--tx:#1b2430;--mu:#6b7686;--pr:#2563eb;--ok:#16a34a;--er:#dc2626;--bd:#e2e8f0}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1521;--card:#18202e;--tx:#e8edf5;--mu:#93a0b4;--bd:#2a3547}}
+*{box-sizing:border-box}
+body{margin:0;font-family:Tahoma,Arial,sans-serif;background:var(--bg);color:var(--tx)}
+header{padding:16px;text-align:center;background:var(--pr);color:#fff}
+header h1{margin:0;font-size:20px}
+#clock{font-size:30px;font-weight:bold;margin-top:6px;direction:ltr}
+#dateTxt{opacity:.9;font-size:15px}
+main{max-width:1000px;margin:auto;padding:14px;display:grid;gap:14px;grid-template-columns:1fr 1fr}
+@media(max-width:800px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}
+.cam{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3}
+video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#status{margin-top:10px;text-align:center;color:var(--mu);min-height:24px}
+#result{display:none;margin-top:10px;text-align:center;padding:12px;border-radius:10px;background:rgba(22,163,74,.12);border:1px solid var(--ok)}
+#result.err{background:rgba(220,38,38,.1);border-color:var(--er)}
+#result img{width:110px;height:110px;object-fit:cover;border-radius:50%;border:3px solid var(--ok)}
+#result h3{margin:6px 0 2px;color:var(--ok)}
+#result.err h3{color:var(--er)}
+.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{flex:1;padding:9px;border:1px solid var(--bd);background:transparent;color:var(--tx);border-radius:8px;cursor:pointer;font-family:inherit}
+.tabs button.on{background:var(--pr);color:#fff;border-color:var(--pr)}
+.pane{display:none}.pane.on{display:block}
+input,textarea{width:100%;padding:9px;margin:5px 0 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font-family:inherit}
+.btn{padding:10px 14px;border:0;border-radius:8px;background:var(--pr);color:#fff;cursor:pointer;font-family:inherit;width:100%}
+.btn.sm{width:auto;padding:5px 10px;font-size:13px}.btn.red{background:var(--er)}.btn.gr{background:var(--ok)}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:8px;border-bottom:1px solid var(--bd);text-align:right}
+td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-left:6px}
+.mu{color:var(--mu);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>نظام تسجيل الحضور بالوجه</h1>
+  <div id="dateTxt"></div>
+  <div id="clock"></div>
+</header>
+<main>
+  <section class="card">
+    <div class="cam"><video id="v" autoplay muted playsinline></video></div>
+    <div id="status">جارٍ تحميل النماذج...</div>
+    <div id="result"></div>
+  </section>
+  <section class="card">
+    <div class="tabs">
+      <button class="on" data-t="scan">تسجيل حضور</button>
+      <button data-t="add">إضافة شخص</button>
+      <button data-t="log">السجل</button>
+      <button data-t="ppl">الأشخاص</button>
+    </div>
+    <div class="pane on" id="p-scan">
+      <p>ضع وجهك أمام الكاميرا وسيتم التعرف عليك وتسجيل حضورك تلقائياً.</p>
+      <p class="mu">حاضرون اليوم: <b id="cnt">0</b></p>
+    </div>
+    <div class="pane" id="p-add">
+      <label>الاسم الكامل</label><input id="nm" placeholder="اسم الشخص">
+      <label>معلومات إضافية (رقم، صف، قسم...)</label><textarea id="inf" rows="2"></textarea>
+      <p class="mu">انظر إلى الكاميرا ثم اضغط الزر لالتقاط الصورة الأولى وحفظ البيانات.</p>
+      <button class="btn gr" id="save">التقاط الصورة وحفظ الشخص</button>
+    </div>
+    <div class="pane" id="p-log">
+      <label>اختر اليوم</label><input type="date" id="day">
+      <div id="logOut"></div>
+      <button class="btn sm" id="csv" style="margin-top:10px">تصدير CSV لهذا اليوم</button>
+    </div>
+    <div class="pane" id="p-ppl"><div id="pplOut"></div></div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const MODELS='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+const store=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){alert('تعذر الحفظ: مساحة التخزين ممتلئة')}};
+let people=load('people',[]);      // {id,name,info,photo,desc}
+let att=load('att',{});            // {'YYYY-MM-DD':[{id,time}]}
+let matcher=null,ready=false,tab='scan',busy=false;
+const pad=n=>String(n).padStart(2,'0');
+const dayKey=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// الساعة والتاريخ
+function tick(){
+  const n=new Date();
+  $('clock').textContent=pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());
+  $('dateTxt').textContent=n.toLocaleDateString('ar-IQ',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+' — '+dayKey(n);
+}
+setInterval(tick,1000);tick();
+
+// التبويبات
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
+  tab=b.dataset.t;
+  document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='p-'+tab));
+  if(tab==='log')renderLog();if(tab==='ppl')renderPeople();
+});
+
+function rebuild(){
+  matcher=people.length?new faceapi.FaceMatcher(people.map(p=>new faceapi.LabeledFaceDescriptors(p.id,[new Float32Array(p.desc)])),0.5):null;
+  $('cnt').textContent=(att[dayKey(new Date())]||[]).length;
+}
+
+async function init(){
+  try{
+    await Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri(MODELS),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODELS),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODELS)]);
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:640,height:480}});
+    $('v').srcObject=s;
+    await new Promise(r=>$('v').onloadedmetadata=r);
+    ready=true;rebuild();$('day').value=dayKey(new Date());
+    setStatus('الكاميرا جاهزة');loop();
+  }catch(e){setStatus('تعذر تشغيل الكاميرا أو تحميل النماذج. تأكد من السماح بالكاميرا ومن الاتصال بالإنترنت.',true)}
+}
+function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
+const detect=()=>faceapi.detectSingleFace($('v'),new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:.5})).withFaceLandmarks().withFaceDescriptor();
+
+function showResult(html,err){const r=$('result');r.className=err?'err':'';r.innerHTML=html;r.style.display='block'}
+
+async function loop(){
+  if(tab==='scan'&&!busy){
+    busy=true;
+    try{
+      const d=await detect();
+      if(!d)setStatus('لا يوجد وجه ظاهر...');
+      else if(!matcher)setStatus('لا يوجد أشخاص مسجلون. أضف شخصاً أولاً.',true);
+      else{
+        const m=matcher.findBestMatch(d.descriptor);
+        if(m.label==='unknown'){setStatus('وجه غير معروف');showResult('<h3>وجه غير معروف</h3><div class="mu">هذا الشخص غير مسجل في النظام</div>',true);await sleep(2500)}
+        else{await mark(people.find(p=>p.id===m.label));await sleep(4000)}
+      }
+    }catch(e){}
+    busy=false;
+  }
+  setTimeout(loop,600);
+}
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+async function mark(p){
+  const n=new Date(),k=dayKey(n),t=pad(n.getHours())+':'+pad(n.getMinutes());
+  att[k]=att[k]||[];
+  const old=att[k].find(a=>a.id===p.id);
+  if(old){showResult(`<img src="${p.photo}"><h3>تم تسجيل حضورك مسبقاً</h3><b>${esc(p.name)}</b><div class="mu">وقت التسجيل: ${old.time}</div>`);setStatus('مسجل مسبقاً اليوم');return}
+  att[k].push({id:p.id,time:t});store('att',att);rebuild();
+  showResult(`<img src="${p.photo}"><h3>تم تسجيل الحضور ✔</h3><b>${esc(p.name)}</b><div class="mu">${k} — ${t}</div>`);
+  setStatus('تم تسجيل الحضور');
+}
+
+// إضافة شخص
+$('save').onclick=async()=>{
+  const name=$('nm').value.trim();
+  if(!name)return alert('اكتب الاسم أولاً');
+  if(!ready)return alert('الكاميرا غير جاهزة');
+  busy=true;setStatus('جارٍ التقاط الوجه...');
+  try{
+    const d=await detect();
+    if(!d){setStatus('لم يتم اكتشاف وجه، حاول مجدداً',true);busy=false;return}
+    if(matcher){const m=matcher.findBestMatch(d.descriptor);if(m.label!=='unknown'&&!confirm('هذا الوجه مسجل مسبقاً باسم: '+people.find(p=>p.id===m.label).name+'\nهل تريد إضافته مرة أخرى؟')){busy=false;return}}
+    const c=document.createElement('canvas');c.width=240;c.height=180;
+    const x=c.getContext('2d');x.translate(240,0);x.scale(-1,1);x.drawImage($('v'),0,0,240,180);
+    people.push({id:'p'+Date.now(),name,info:$('inf').value.trim(),photo:c.toDataURL('image/jpeg',.7),desc:Array.from(d.descriptor)});
+    store('people',people);rebuild();
+    $('nm').value='';$('inf').value='';setStatus('تم حفظ '+name);alert('تم حفظ الشخص بنجاح');
+  }catch(e){setStatus('حدث خطأ أثناء الحفظ',true)}
+  busy=false;
+};
+
+// السجل
+function renderLog(){
+  const k=$('day').value,list=att[k]||[];
+  $('logOut').innerHTML=list.length?`<p class="mu">عدد الحاضرين: ${list.length} من ${people.length}</p><table><tr><th>الاسم</th><th>الوقت</th></tr>`+
+    list.map(a=>{const p=people.find(x=>x.id===a.id)||{name:'(محذوف)',photo:''};return `<tr><td>${p.photo?`<img src="${p.photo}">`:''}${esc(p.name)}</td><td dir="ltr">${a.time}</td></tr>`}).join('')+'</table>':'<p class="mu">لا توجد سجلات في هذا اليوم.</p>';
+}
+$('day').onchange=renderLog;
+$('csv').onclick=()=>{
+  const k=$('day').value,rows=['الاسم,الوقت,التاريخ'].concat((att[k]||[]).map(a=>{const p=people.find(x=>x.id===a.id)||{name:''};return `"${p.name.replace(/"/g,'""')}",${a.time},${k}`}));
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));a.download='attendance-'+k+'.csv';a.click();
+};
+
+// الأشخاص
+function renderPeople(){
+  $('pplOut').innerHTML=people.length?'<table>'+people.map(p=>`<tr><td><img src="${p.photo}">${esc(p.name)}<div class="mu">${esc(p.info)}</div></td><td><button class="btn sm red" onclick="delP('${p.id}')">حذف</button></td></tr>`).join('')+'</table>':'<p class="mu">لا يوجد أشخاص مسجلون.</p>';
+}
+function delP(id){if(!confirm('حذف هذا الشخص؟ (سجلات حضوره السابقة تبقى)'))return;people=people.filter(p=>p.id!==id);store('people',people);rebuild();renderPeople()}
+
+init();
+</script>
+</body>
+</html>
