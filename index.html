@@ -73,7 +73,13 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
       <div id="logOut"></div>
       <button class="btn sm" id="csv" style="margin-top:10px">تصدير CSV لهذا اليوم</button>
     </div>
-    <div class="pane" id="p-ppl"><div id="pplOut"></div></div>
+    <div class="pane" id="p-ppl"><div id="pplOut"></div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn sm" id="bk">تصدير نسخة احتياطية</button>
+        <button class="btn sm gr" id="rs">استيراد نسخة</button>
+        <input type="file" id="rsf" accept=".json" style="display:none">
+      </div>
+      <p class="mu">البيانات محفوظة في هذا المتصفح فقط، احتفظ بنسخة احتياطية دورياً.</p></div>
   </section>
 </main>
 
@@ -108,8 +114,12 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   if(tab==='log')renderLog();if(tab==='ppl')renderPeople();
 });
 
+const descs=p=>(Array.isArray(p.desc[0])?p.desc:[p.desc]).map(d=>new Float32Array(d));
+const dist=(a,b)=>Math.min(...descs(a).flatMap(x=>descs(b).map(y=>faceapi.euclideanDistance(x,y))));
+const SAME=0.55; // أقل من هذه المسافة = نفس الشخص
+function findDup(cand){let best=null,bd=9;people.forEach(p=>{const d=dist(cand,p);if(d<SAME&&d<bd){bd=d;best=p}});return best}
 function rebuild(){
-  matcher=people.length?new faceapi.FaceMatcher(people.map(p=>new faceapi.LabeledFaceDescriptors(p.id,[new Float32Array(p.desc)])),0.5):null;
+  matcher=people.length?new faceapi.FaceMatcher(people.map(p=>new faceapi.LabeledFaceDescriptors(p.id,descs(p))),0.5):null;
   $('cnt').textContent=(att[dayKey(new Date())]||[]).length;
 }
 
@@ -166,7 +176,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function mark(p){
   const n=new Date(),k=dayKey(n),t=pad(n.getHours())+':'+pad(n.getMinutes());
   att[k]=att[k]||[];
-  const old=att[k].find(a=>a.id===p.id);
+  const old=att[k].find(a=>{const q=people.find(x=>x.id===a.id);return a.id===p.id||(q&&dist(q,p)<SAME)});
   if(old){showResult(`<img src="${p.photo}"><h3>لا يمكنك تسجيل الحضور مرة ثانية</h3><b>${esc(p.name)}</b><div class="mu">سجّلت حضورك اليوم الساعة ${t12(old.time)}</div>`,true);setStatus('تم تسجيل حضورك مسبقاً اليوم',true);return}
   att[k].push({id:p.id,time:t});store('att',att);rebuild();
   showResult(`<img src="${p.photo}"><h3>تم تسجيل الحضور ✔</h3><b>${esc(p.name)}</b><div class="mu">${k} — ${t12(t)}</div>`);
@@ -177,19 +187,31 @@ async function mark(p){
 $('save').onclick=async()=>{
   const name=$('nm').value.trim();
   if(!name)return alert('اكتب الاسم أولاً');
-  if(!ready)return alert('الكاميرا غير جاهزة');
-  busy=true;setStatus('جارٍ التقاط الوجه...');
+  if(!ready)return alert('شغّل الكاميرا أولاً');
+  const btn=$('save');btn.disabled=true;
+  while(busy)await sleep(50);
+  busy=true;
   try{
-    const d=await detect();
-    if(!d){setStatus('لم يتم اكتشاف وجه، حاول مجدداً',true);busy=false;return}
-    if(matcher){const m=matcher.findBestMatch(d.descriptor);if(m.label!=='unknown'&&!confirm('هذا الوجه مسجل مسبقاً باسم: '+people.find(p=>p.id===m.label).name+'\nهل تريد إضافته مرة أخرى؟')){busy=false;return}}
+    setStatus('ثبّت وجهك أمام الكاميرا... جارٍ التقاط الصورة');
+    const smp=[];
+    for(let t=0;t<10&&smp.length<3;t++){const d=await detect();if(d)smp.push(Array.from(d.descriptor));await sleep(350)}
+    if(smp.length<3){setStatus('لم يتم اكتشاف وجه واضح، حاول مجدداً',true);return}
+    const f=smp.map(a=>new Float32Array(a));
+    if(faceapi.euclideanDistance(f[0],f[1])>0.5||faceapi.euclideanDistance(f[0],f[2])>0.5){setStatus('الوجه غير ثابت، انظر للكاميرا مباشرة وحاول مجدداً',true);return}
+    const dup=findDup({desc:smp});
+    if(dup){
+      showResult(`<img src="${dup.photo}"><h3>مرفوض: هذا الشخص مسجل مسبقاً</h3><b>${esc(dup.name)}</b><div class="mu">لا يمكن إضافة نفس الشخص مرتين</div>`,true);
+      setStatus('تم رفض الإضافة: الوجه مسجل مسبقاً',true);return;
+    }
     const c=document.createElement('canvas');c.width=240;c.height=180;
     const x=c.getContext('2d');x.translate(240,0);x.scale(-1,1);x.drawImage($('v'),0,0,240,180);
-    people.push({id:'p'+Date.now(),name,info:$('inf').value.trim(),photo:c.toDataURL('image/jpeg',.7),desc:Array.from(d.descriptor)});
-    store('people',people);rebuild();
-    $('nm').value='';$('inf').value='';setStatus('تم حفظ '+name);alert('تم حفظ الشخص بنجاح');
+    const p={id:'p'+Date.now(),name,info:$('inf').value.trim(),photo:c.toDataURL('image/jpeg',.7),desc:smp,added:new Date().toISOString()};
+    people.push(p);store('people',people);rebuild();
+    $('nm').value='';$('inf').value='';
+    showResult(`<img src="${p.photo}"><h3>تمت إضافة الشخص بنجاح ✔</h3><b>${esc(p.name)}</b>`);
+    setStatus('تم حفظ '+name);
   }catch(e){setStatus('حدث خطأ أثناء الحفظ',true)}
-  busy=false;
+  finally{busy=false;btn.disabled=false}
 };
 
 // السجل
@@ -210,6 +232,22 @@ function renderPeople(){
 }
 function delP(id){if(!confirm('حذف هذا الشخص؟ (سجلات حضوره السابقة تبقى)'))return;people=people.filter(p=>p.id!==id);store('people',people);rebuild();renderPeople()}
 
+$('bk').onclick=()=>{
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([JSON.stringify({people,att})],{type:'application/json'}));
+  a.download='attendance-backup-'+dayKey(new Date())+'.json';a.click();
+};
+$('rs').onclick=()=>$('rsf').click();
+$('rsf').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{
+    const d=JSON.parse(await f.text());
+    if(!Array.isArray(d.people)||typeof d.att!=='object')throw 0;
+    if(!confirm('سيتم استبدال البيانات الحالية بالنسخة المستوردة. متابعة؟'))return;
+    people=d.people;att=d.att;store('people',people);store('att',att);rebuild();renderPeople();alert('تم الاستيراد بنجاح');
+  }catch(x){alert('ملف غير صالح')}
+  e.target.value='';
+};
 init();
 </script>
 </body>
