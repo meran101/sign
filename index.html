@@ -24,6 +24,7 @@ video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
 #result img{width:110px;height:110px;object-fit:cover;border-radius:50%;border:3px solid var(--ok)}
 #result h3{margin:6px 0 2px;color:var(--ok)}
 #result.err h3{color:var(--er)}
+#result.err img{border-color:var(--er)}
 .tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
 .tabs button{flex:1;padding:9px;border:1px solid var(--bd);background:transparent;color:var(--tx);border-radius:8px;cursor:pointer;font-family:inherit}
 .tabs button.on{background:var(--pr);color:#fff;border-color:var(--pr)}
@@ -46,6 +47,7 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
 <main>
   <section class="card">
     <div class="cam"><video id="v" autoplay muted playsinline></video></div>
+    <button class="btn red" id="camBtn" style="margin-top:10px">إيقاف الكاميرا</button>
     <div id="status">جارٍ تحميل النماذج...</div>
     <div id="result"></div>
   </section>
@@ -89,9 +91,11 @@ const dayKey=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // الساعة والتاريخ
+function f12(h,m,s){const ap=h>=12?'م':'ص';h=h%12||12;return h+':'+pad(m)+(s===undefined?'':':'+pad(s))+' '+ap}
+function t12(t){const [h,m]=t.split(':').map(Number);return f12(h,m)}
 function tick(){
   const n=new Date();
-  $('clock').textContent=pad(n.getHours())+':'+pad(n.getMinutes())+':'+pad(n.getSeconds());
+  $('clock').textContent=f12(n.getHours(),n.getMinutes(),n.getSeconds());
   $('dateTxt').textContent=n.toLocaleDateString('ar-IQ',{weekday:'long',year:'numeric',month:'long',day:'numeric'})+' — '+dayKey(n);
 }
 setInterval(tick,1000);tick();
@@ -109,26 +113,39 @@ function rebuild(){
   $('cnt').textContent=(att[dayKey(new Date())]||[]).length;
 }
 
-async function init(){
+let stream=null,modelsOk=false;
+function camBtn(on){$('camBtn').textContent=on?'إيقاف الكاميرا':'تشغيل الكاميرا';$('camBtn').className='btn '+(on?'red':'gr')}
+async function startCam(){
   try{
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODELS),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODELS),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODELS)]);
-    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:640,height:480}});
-    $('v').srcObject=s;
+    setStatus('جارٍ تشغيل الكاميرا...');
+    if(!modelsOk){
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODELS),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODELS),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODELS)]);
+      modelsOk=true;
+    }
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:640,height:480}});
+    $('v').srcObject=stream;
     await new Promise(r=>$('v').onloadedmetadata=r);
-    ready=true;rebuild();$('day').value=dayKey(new Date());
-    setStatus('الكاميرا جاهزة');loop();
-  }catch(e){setStatus('تعذر تشغيل الكاميرا أو تحميل النماذج. تأكد من السماح بالكاميرا ومن الاتصال بالإنترنت.',true)}
+    ready=true;camBtn(true);setStatus('الكاميرا جاهزة');
+  }catch(e){ready=false;camBtn(false);setStatus('تعذر تشغيل الكاميرا أو تحميل النماذج. تأكد من السماح بالكاميرا ومن الاتصال بالإنترنت.',true)}
 }
+function stopCam(){
+  ready=false;
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=null;$('v').srcObject=null;$('result').style.display='none';
+  camBtn(false);setStatus('الكاميرا متوقفة');
+}
+$('camBtn').onclick=()=>ready?stopCam():startCam();
+async function init(){rebuild();$('day').value=dayKey(new Date());loop();await startCam()}
 function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
 const detect=()=>faceapi.detectSingleFace($('v'),new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:.5})).withFaceLandmarks().withFaceDescriptor();
 
 function showResult(html,err){const r=$('result');r.className=err?'err':'';r.innerHTML=html;r.style.display='block'}
 
 async function loop(){
-  if(tab==='scan'&&!busy){
+  if(tab==='scan'&&!busy&&ready){
     busy=true;
     try{
       const d=await detect();
@@ -150,9 +167,9 @@ async function mark(p){
   const n=new Date(),k=dayKey(n),t=pad(n.getHours())+':'+pad(n.getMinutes());
   att[k]=att[k]||[];
   const old=att[k].find(a=>a.id===p.id);
-  if(old){showResult(`<img src="${p.photo}"><h3>تم تسجيل حضورك مسبقاً</h3><b>${esc(p.name)}</b><div class="mu">وقت التسجيل: ${old.time}</div>`);setStatus('مسجل مسبقاً اليوم');return}
+  if(old){showResult(`<img src="${p.photo}"><h3>لا يمكنك تسجيل الحضور مرة ثانية</h3><b>${esc(p.name)}</b><div class="mu">سجّلت حضورك اليوم الساعة ${t12(old.time)}</div>`,true);setStatus('تم تسجيل حضورك مسبقاً اليوم',true);return}
   att[k].push({id:p.id,time:t});store('att',att);rebuild();
-  showResult(`<img src="${p.photo}"><h3>تم تسجيل الحضور ✔</h3><b>${esc(p.name)}</b><div class="mu">${k} — ${t}</div>`);
+  showResult(`<img src="${p.photo}"><h3>تم تسجيل الحضور ✔</h3><b>${esc(p.name)}</b><div class="mu">${k} — ${t12(t)}</div>`);
   setStatus('تم تسجيل الحضور');
 }
 
@@ -179,11 +196,11 @@ $('save').onclick=async()=>{
 function renderLog(){
   const k=$('day').value,list=att[k]||[];
   $('logOut').innerHTML=list.length?`<p class="mu">عدد الحاضرين: ${list.length} من ${people.length}</p><table><tr><th>الاسم</th><th>الوقت</th></tr>`+
-    list.map(a=>{const p=people.find(x=>x.id===a.id)||{name:'(محذوف)',photo:''};return `<tr><td>${p.photo?`<img src="${p.photo}">`:''}${esc(p.name)}</td><td dir="ltr">${a.time}</td></tr>`}).join('')+'</table>':'<p class="mu">لا توجد سجلات في هذا اليوم.</p>';
+    list.map(a=>{const p=people.find(x=>x.id===a.id)||{name:'(محذوف)',photo:''};return `<tr><td>${p.photo?`<img src="${p.photo}">`:''}${esc(p.name)}</td><td>${t12(a.time)}</td></tr>`}).join('')+'</table>':'<p class="mu">لا توجد سجلات في هذا اليوم.</p>';
 }
 $('day').onchange=renderLog;
 $('csv').onclick=()=>{
-  const k=$('day').value,rows=['الاسم,الوقت,التاريخ'].concat((att[k]||[]).map(a=>{const p=people.find(x=>x.id===a.id)||{name:''};return `"${p.name.replace(/"/g,'""')}",${a.time},${k}`}));
+  const k=$('day').value,rows=['الاسم,الوقت,التاريخ'].concat((att[k]||[]).map(a=>{const p=people.find(x=>x.id===a.id)||{name:''};return `"${p.name.replace(/"/g,'""')}",${t12(a.time)},${k}`}));
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));a.download='attendance-'+k+'.csv';a.click();
 };
 
