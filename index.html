@@ -18,6 +18,7 @@ main{max-width:1000px;margin:auto;padding:14px;display:grid;gap:14px;grid-templa
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}
 .cam{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3}
 video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+#ov{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1);pointer-events:none}
 #status{margin-top:10px;text-align:center;color:var(--mu);min-height:24px}
 #result{display:none;margin-top:10px;text-align:center;padding:12px;border-radius:10px;background:rgba(22,163,74,.12);border:1px solid var(--ok)}
 #result.err{background:rgba(220,38,38,.1);border-color:var(--er)}
@@ -46,7 +47,7 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
 </header>
 <main>
   <section class="card">
-    <div class="cam"><video id="v" autoplay muted playsinline></video></div>
+    <div class="cam" id="cam"><video id="v" autoplay muted playsinline></video><canvas id="ov"></canvas></div>
     <button class="btn red" id="camBtn" style="margin-top:10px">إيقاف الكاميرا</button>
     <div id="status">جارٍ تحميل النماذج...</div>
     <div id="result"></div>
@@ -137,15 +138,24 @@ async function startCam(){
     if(!modelsOk){
       await Promise.all([
         faceapi.nets.ssdMobilenetv1.loadFromUri(MODELS),
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODELS),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODELS),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODELS)]);
       modelsOk=true;
     }
-    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:640,height:480}});
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});
     $('v').srcObject=stream;
     await new Promise(r=>$('v').onloadedmetadata=r);
+    try{await $('v').play()}catch(_){}
+    $('cam').style.aspectRatio=$('v').videoWidth+'/'+$('v').videoHeight;
     ready=true;camBtn(true);setStatus('الكاميرا جاهزة');
-  }catch(e){ready=false;camBtn(false);setStatus('تعذر تشغيل الكاميرا أو تحميل النماذج. تأكد من السماح بالكاميرا ومن الاتصال بالإنترنت.',true)}
+  }catch(e){
+    ready=false;camBtn(false);const n=e&&e.name;
+    setStatus(n==='NotAllowedError'?'تم رفض إذن الكاميرا: اضغط على أيقونة القفل بجانب الرابط واسمح بالكاميرا ثم اضغط "تشغيل الكاميرا"':
+      n==='NotFoundError'?'لا توجد كاميرا متصلة بالجهاز':
+      n==='NotReadableError'?'الكاميرا مستخدمة من تطبيق آخر، أغلقه ثم اضغط "تشغيل الكاميرا"':
+      'تعذر تحميل نماذج التعرف أو تشغيل الكاميرا. تحقق من الإنترنت ثم اضغط "تشغيل الكاميرا"',true);
+  }
 }
 function stopCam(){
   ready=false;
@@ -154,10 +164,37 @@ function stopCam(){
   camBtn(false);setStatus('الكاميرا متوقفة');
 }
 $('camBtn').onclick=()=>ready?stopCam():startCam();
-async function init(){rebuild();$('day').value=dayKey(new Date());loop();await startCam()}
+let pv=false;
+async function previewLoop(){
+  const cv=$('ov'),v=$('v');
+  if(tab==='add'&&!busy&&ready&&v.videoWidth){
+    pv=true;
+    try{
+      const d=await faceapi.detectSingleFace(v,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.4}));
+      if(tab==='add'&&!busy){
+        cv.width=v.videoWidth;cv.height=v.videoHeight;
+        const x=cv.getContext('2d');x.clearRect(0,0,cv.width,cv.height);
+        if(d){
+          const b=d.box,ok=b.width/v.videoWidth>=0.10;
+          x.lineWidth=4;x.strokeStyle=ok?'#16a34a':'#f59e0b';x.strokeRect(b.x,b.y,b.width,b.height);
+          setStatus(ok?'الوجه ظاهر بوضوح ✔ يمكنك الضغط على زر الحفظ':'اقترب قليلاً من الكاميرا',!ok);
+        }else setStatus('لا يظهر وجه: وجّه وجهك للكاميرا وتأكد من الإضاءة',true);
+      }
+    }catch(e){}
+    pv=false;
+  }else if(cv.width)cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
+  setTimeout(previewLoop,400);
+}
+async function init(){rebuild();$('day').value=dayKey(new Date());loop();previewLoop();await startCam()}
 function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
-const detect=()=>faceapi.detectSingleFace($('v'),new faceapi.SsdMobilenetv1Options({minConfidence:0.6})).withFaceLandmarks().withFaceDescriptor();
-const small=d=>d.detection.box.width/$('v').videoWidth<0.18; // الوجه بعيد جداً
+async function detect(){
+  const v=$('v');
+  if(!ready||v.readyState<2||!v.videoWidth)return null;
+  let r=await faceapi.detectSingleFace(v,new faceapi.SsdMobilenetv1Options({minConfidence:0.4})).withFaceLandmarks().withFaceDescriptor();
+  if(!r)r=await faceapi.detectSingleFace(v,new faceapi.TinyFaceDetectorOptions({inputSize:416,scoreThreshold:0.4})).withFaceLandmarks().withFaceDescriptor();
+  return r||null;
+}
+const small=d=>d.detection.box.width/$('v').videoWidth<0.10; // الوجه بعيد جداً
 
 function showResult(html,err){const r=$('result');r.className=err?'err':'';r.innerHTML=html;r.style.display='block'}
 
@@ -211,23 +248,34 @@ $('save').onclick=async()=>{
   if(same){showResult(`<img src="${same.photo}"><h3>مرفوض: الاسم مسجل مسبقاً</h3><b>${esc(same.name)}</b><div class="mu">لا يمكن تكرار نفس الاسم الرباعي</div>`,true);setStatus('تم رفض الإضافة: الاسم مكرر',true);return}
   if(!ready)return alert('شغّل الكاميرا أولاً');
   const btn=$('save');btn.disabled=true;
-  while(busy)await sleep(50);
+  while(busy||pv)await sleep(30);
   busy=true;
+  $('ov').getContext('2d').clearRect(0,0,$('ov').width,$('ov').height);
   try{
     const smp=[];let photo=null;
     for(let k=0;k<STEPS.length;k++){
       setStatus(`(${k+1}/${STEPS.length}) ${STEPS[k]}`);
       await sleep(k===0?1200:2200);
-      let d=null;
-      for(let t=0;t<4&&!d;t++){const r=await detect();if(r&&!small(r))d=r;else await sleep(300)}
-      if(!d){setStatus('لم يتم اكتشاف وجه واضح، اقترب وحاول مجدداً',true);return}
+      let d=null;const t0=Date.now(),lim=k===0?10000:4000,tag=`(${k+1}/${STEPS.length}) `;
+      while(!d&&Date.now()-t0<lim){
+        const r=await detect();
+        if(!r)setStatus(tag+'لا يظهر وجه: وجّه وجهك للكاميرا وتأكد من الإضاءة',true);
+        else if(small(r))setStatus(tag+'اقترب قليلاً من الكاميرا',true);
+        else d=r;
+        if(!d)await sleep(250);
+      }
+      if(!d){
+        if(k===0){setStatus('لم يظهر وجهك. تأكد من الإضاءة وأن الكاميرا أمام وجهك مباشرة ثم أعد المحاولة',true);return}
+        continue; // تخطَّ الوضعية الصعبة ولا تُفشل العملية
+      }
       if(k===0){
         const c=document.createElement('canvas');c.width=240;c.height=180;
         const x=c.getContext('2d');x.translate(240,0);x.scale(-1,1);x.drawImage($('v'),0,0,240,180);
         photo=c.toDataURL('image/jpeg',.7);
-      }else if(faceapi.euclideanDistance(d.descriptor,new Float32Array(smp[0]))>0.6){setStatus('تغيّر الوجه أثناء الالتقاط، أعد المحاولة بشخص واحد أمام الكاميرا',true);return}
+      }else if(faceapi.euclideanDistance(d.descriptor,new Float32Array(smp[0]))>0.6)continue;
       smp.push(Array.from(d.descriptor));
     }
+    if(smp.length<3){setStatus('لم تكتمل الالتقاطات. ابقَ وحدك أمام الكاميرا بإضاءة جيدة وأعد المحاولة',true);return}
     const dup=findDup({desc:smp});
     if(dup){
       showResult(`<img src="${dup.photo}"><h3>مرفوض: هذا الشخص مسجل مسبقاً</h3><b>${esc(dup.name)}</b><div class="mu">الوجه مطابق لشخص مسجل، لا يمكن إضافته مرتين</div>`,true);
