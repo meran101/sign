@@ -53,16 +53,16 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
   </section>
   <section class="card">
     <div class="tabs">
-      <button class="on" data-t="scan">تسجيل حضور</button>
-      <button data-t="add">إضافة شخص</button>
+      <button class="on" data-t="add">إضافة شخص</button>
+      <button data-t="scan">تسجيل حضور</button>
       <button data-t="log">السجل</button>
       <button data-t="ppl">الأشخاص</button>
     </div>
-    <div class="pane on" id="p-scan">
+    <div class="pane" id="p-scan">
       <p>ضع وجهك أمام الكاميرا وسيتم التعرف عليك وتسجيل حضورك تلقائياً.</p>
       <p class="mu">حاضرون اليوم: <b id="cnt">0</b></p>
     </div>
-    <div class="pane" id="p-add">
+    <div class="pane on" id="p-add">
       <label>الاسم الرباعي (أربعة أسماء فقط)</label><input id="nm" placeholder="مثال: محمد أحمد علي حسن">
       <p class="mu">اكتب الاسم الرباعي ثم اضغط الزر وتابع التعليمات: سيُطلب منك النظر للكاميرا بتعابير مختلفة (ابتسامة، تعجب، إمالة الرأس) ليتعرف عليك الموقع بدقة في كل الحالات.</p>
       <button class="btn gr" id="save">التقاط الصورة وحفظ الشخص</button>
@@ -90,7 +90,7 @@ const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){re
 const store=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){alert('تعذر الحفظ: مساحة التخزين ممتلئة')}};
 let people=load('people',[]);      // {id,name,info,photo,desc}
 let att=load('att',{});            // {'YYYY-MM-DD':[{id,time}]}
-let matcher=null,ready=false,tab='scan',busy=false;
+let matcher=null,ready=false,tab='add',busy=false;
 const pad=n=>String(n).padStart(2,'0');
 const dayKey=d=>d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
