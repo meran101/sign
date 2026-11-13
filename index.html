@@ -101,6 +101,7 @@ const MODELS='https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
 const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
 const store=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){alert('تعذر الحفظ: مساحة التخزين ممتلئة')}};
 let people=load('people',[]);      // {id,name,info,photo,desc}
+let abs=load('abs',{});             // الغائبون المسجلون تلقائياً بعد انتهاء كل يوم {'YYYY-MM-DD':[{id,name}]}
 let att=load('att',{});            // {'YYYY-MM-DD':[{id,time}]}
 let matcher=null,ready=false,tab='add',busy=false;
 const pad=n=>String(n).padStart(2,'0');
@@ -176,6 +177,23 @@ function stopCam(){
   camBtn(false);setStatus('الكاميرا متوقفة');
 }
 $('camBtn').onclick=()=>ready?stopCam():startCam();
+function finalizeDays(){
+  const today=dayKey(new Date());
+  const ks=Object.keys(att).filter(k=>att[k].length).sort();
+  const first=ks[0]||today;
+  const start=p=>p.added?dayKey(new Date(p.added)):first;
+  if(!people.length)return;
+  const d=new Date(people.map(start).sort()[0]+'T00:00:00');
+  let changed=false;
+  for(;dayKey(d)<today;d.setDate(d.getDate()+1)){
+    const k=dayKey(d);
+    if(abs[k])continue;
+    const here=new Set((att[k]||[]).map(a=>a.id));
+    abs[k]=people.filter(p=>start(p)<=k&&!here.has(p.id)).map(p=>({id:p.id,name:p.name}));
+    changed=true;
+  }
+  if(changed)store('abs',abs);
+}
 let pv=false;
 async function previewLoop(){
   const cv=$('ov'),v=$('v');
@@ -197,7 +215,7 @@ async function previewLoop(){
   }else if(cv.width)cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
   setTimeout(previewLoop,400);
 }
-async function init(){rebuild();loop();previewLoop();await startCam()}
+async function init(){rebuild();finalizeDays();setInterval(()=>{finalizeDays();if(tab==='log')renderLog()},60000);loop();previewLoop();await startCam()}
 function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
 async function detect(){
   const v=$('v');
@@ -313,12 +331,14 @@ function renderLog(){
     const rows=list.filter(a=>!q||norm(nm2(a.id).name).includes(q));
     if(q&&!rows.length)return '';
     const here=new Set(list.map(a=>a.id));
-    const absent=people.filter(p=>!here.has(p.id)&&(!p.added||dayKey(new Date(p.added))<=k)&&(!q||norm(p.name).includes(q)));
-    const total=list.length+people.filter(p=>!here.has(p.id)&&(!p.added||dayKey(new Date(p.added))<=k)).length;
+    const past=k<today;
+    const absAll=past?(abs[k]||[]):[];
+    const absent=absAll.filter(x=>!q||norm(x.name).includes(q));
+    const total=past?list.length+absAll.length:people.length;
     return `<details class="dayc" ${(i===0||only)?'open':''}>
       <summary><b>${dayName(k)}${k===today?' (اليوم)':''}</b><span class="badge ${list.length?'':'zero'}">حضر ${list.length} من ${total}</span></summary>
       ${rows.map(a=>{const p=nm2(a.id);return `<div class="row">${p.photo?`<img src="${p.photo}">`:''}<span>${esc(p.name)}</span><span class="t">${t12(a.time)}</span></div>`}).join('')||'<div class="row mu">لا يوجد حاضرون في هذا اليوم</div>'}
-      ${absent.length?`<details><summary class="mu" style="padding:9px 11px;cursor:pointer;border-top:1px solid var(--bd)">الغائبون (${absent.length})</summary>${absent.map(p=>`<div class="row ab"><img src="${p.photo}"><span>${esc(p.name)}</span><span class="t">غائب</span></div>`).join('')}</details>`:''}
+      ${past?(absent.length?`<details><summary class="mu" style="padding:9px 11px;cursor:pointer;border-top:1px solid var(--bd)">الغائبون (${absent.length})</summary>${absent.map(x=>`<div class="row ab">${nm2(x.id).photo?`<img src="${nm2(x.id).photo}">`:''}<span>${esc(x.name)}</span><span class="t">غائب</span></div>`).join('')}</details>`:''):'<div class="row mu">يُسجَّل الغائبون تلقائياً بعد انتهاء اليوم</div>'}
       <button class="btn sm" onclick="csvDay('${k}')">تصدير CSV لهذا اليوم</button>
     </details>`;
   }).join('');
@@ -330,7 +350,7 @@ function csvDay(k){
   const rows=['الاسم,الحالة,الوقت,التاريخ'];
   const here=new Set((att[k]||[]).map(a=>a.id));
   (att[k]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(a=>rows.push(`"${nm2(a.id).name.replace(/"/g,'""')}",حاضر,${t12(a.time)},${k}`));
-  people.filter(p=>!here.has(p.id)&&(!p.added||dayKey(new Date(p.added))<=k)).forEach(p=>rows.push(`"${p.name.replace(/"/g,'""')}",غائب,,${k}`));
+  (k<dayKey(new Date())?(abs[k]||[]):[]).forEach(p=>rows.push(`"${p.name.replace(/"/g,'""')}",غائب,,${k}`));
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));
   a.download='attendance-'+k+'.csv';a.click();
 }
@@ -343,7 +363,7 @@ function delP(id){if(!confirm('حذف هذا الشخص؟ (سجلات حضوره
 
 $('bk').onclick=()=>{
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([JSON.stringify({people,att})],{type:'application/json'}));
+  a.href=URL.createObjectURL(new Blob([JSON.stringify({people,att,abs})],{type:'application/json'}));
   a.download='attendance-backup-'+dayKey(new Date())+'.json';a.click();
 };
 $('rs').onclick=()=>$('rsf').click();
@@ -353,7 +373,7 @@ $('rsf').onchange=async e=>{
     const d=JSON.parse(await f.text());
     if(!Array.isArray(d.people)||typeof d.att!=='object')throw 0;
     if(!confirm('سيتم استبدال البيانات الحالية بالنسخة المستوردة. متابعة؟'))return;
-    people=d.people;att=d.att;store('people',people);store('att',att);rebuild();renderPeople();alert('تم الاستيراد بنجاح');
+    people=d.people;att=d.att;abs=d.abs||{};store('people',people);store('att',att);store('abs',abs);finalizeDays();rebuild();renderPeople();alert('تم الاستيراد بنجاح');
   }catch(x){alert('ملف غير صالح')}
   e.target.value='';
 };
