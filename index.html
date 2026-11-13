@@ -48,6 +48,7 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
 <main>
   <section class="card">
     <div class="cam" id="cam"><video id="v" autoplay muted playsinline></video><canvas id="ov"></canvas></div>
+    <button class="btn gr" id="save" style="margin-top:10px;font-size:16px;padding:12px">التقاط الصورة وحفظ الشخص</button>
     <button class="btn red" id="camBtn" style="margin-top:10px">إيقاف الكاميرا</button>
     <div id="status">جارٍ تحميل النماذج...</div>
     <div id="result"></div>
@@ -65,8 +66,8 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
     </div>
     <div class="pane on" id="p-add">
       <label>الاسم الرباعي (أربعة أسماء فقط)</label><input id="nm" placeholder="مثال: محمد أحمد علي حسن">
-      <p class="mu">اكتب الاسم الرباعي ثم اضغط الزر وتابع التعليمات: سيُطلب منك النظر للكاميرا بتعابير مختلفة (ابتسامة، تعجب، إمالة الرأس) ليتعرف عليك الموقع بدقة في كل الحالات.</p>
-      <button class="btn gr" id="save">التقاط الصورة وحفظ الشخص</button>
+      <p class="mu">اكتب الاسم الرباعي ثم اضغط زر "التقاط الصورة وحفظ الشخص" الموجود تحت الكاميرا وتابع التعليمات: سيُطلب منك النظر للكاميرا بتعابير مختلفة (ابتسامة، تعجب، إمالة الرأس) ليتعرف عليك الموقع بدقة في كل الحالات.</p>
+      
     </div>
     <div class="pane" id="p-log">
       <label>اختر اليوم</label><input type="date" id="day">
@@ -109,6 +110,7 @@ setInterval(tick,1000);tick();
 // التبويبات
 document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   tab=b.dataset.t;
+  $('save').style.display=tab==='add'?'block':'none';
   document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='p-'+tab));
   if(tab==='log')renderLog();if(tab==='ppl')renderPeople();
