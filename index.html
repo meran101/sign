@@ -43,6 +43,10 @@ input,textarea{width:100%;padding:9px;margin:5px 0 10px;border:1px solid var(--b
 .row .t{margin-inline-start:auto;font-weight:bold;color:var(--ok);white-space:nowrap}
 .row.ab .t{color:var(--er)}
 .dayc .btn.sm{margin:8px 11px}
+.sub{display:flex;gap:6px;margin-bottom:10px}
+.sub button{flex:1;padding:7px;border:1px solid var(--bd);background:transparent;color:var(--tx);border-radius:8px;cursor:pointer;font-family:inherit}
+.sub button.on{background:var(--pr);color:#fff;border-color:var(--pr)}
+.av{width:34px;height:34px;border-radius:50%;object-fit:cover}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:8px;border-bottom:1px solid var(--bd);text-align:right}
 td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-left:6px}
@@ -69,6 +73,7 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
       <button data-t="scan">تسجيل حضور</button>
       <button data-t="log">السجل</button>
       <button data-t="ppl">الأشخاص</button>
+      <button data-t="abs">الغائبون</button>
     </div>
     <div class="pane" id="p-scan">
       <p>ضع وجهك أمام الكاميرا وسيتم التعرف عليك وتسجيل حضورك تلقائياً.</p>
@@ -83,6 +88,13 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
       <input id="q" placeholder="🔍 ابحث بالاسم...">
       <div style="display:flex;gap:8px;align-items:center"><input type="date" id="day" style="margin:0" title="اختر يوماً"><button class="btn sm" id="all">كل الأيام</button></div>
       <div id="logOut" style="max-height:62vh;overflow:auto;margin-top:10px"></div>
+    </div>
+    <div class="pane" id="p-abs">
+      <div class="sub"><button class="on" id="v-day">حسب اليوم</button><button id="v-per">حسب الشخص</button></div>
+      <input id="q2" placeholder="🔍 ابحث بالاسم...">
+      <div style="display:flex;gap:8px;align-items:center"><input type="date" id="day2" style="margin:0" title="اختر يوماً"><button class="btn sm" id="all2">كل الأيام</button></div>
+      <div id="absOut" style="max-height:60vh;overflow:auto;margin-top:10px"></div>
+      <p class="mu">يُضاف الشخص هنا تلقائياً بعد انتهاء اليوم إذا لم يسجّل حضوره.</p>
     </div>
     <div class="pane" id="p-ppl"><div id="pplOut"></div>
       <div style="display:flex;gap:8px;margin-top:12px">
@@ -124,7 +136,7 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
   $('save').style.display=tab==='add'?'block':'none';
   document.querySelectorAll('.tabs button').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='p-'+tab));
-  if(tab==='log')renderLog();if(tab==='ppl')renderPeople();
+  if(tab==='log')renderLog();if(tab==='ppl')renderPeople();if(tab==='abs')renderAbs();
 });
 
 const descs=p=>(Array.isArray(p.desc[0])?p.desc:[p.desc]).map(d=>new Float32Array(d));
@@ -177,6 +189,28 @@ function stopCam(){
   camBtn(false);setStatus('الكاميرا متوقفة');
 }
 $('camBtn').onclick=()=>ready?stopCam():startCam();
+let absView='day';
+const avt=id=>nm2(id).photo?`<img class="av" src="${nm2(id).photo}">`:'';
+function renderAbs(){
+  const q=norm($('q2').value||''),only=$('day2').value;let html='';
+  if(absView==='day'){
+    html=Object.keys(abs).filter(k=>abs[k].length&&(!only||k===only)).sort().reverse().map((k,i)=>{
+      const rows=abs[k].filter(x=>!q||norm(x.name).includes(q));
+      if(!rows.length)return '';
+      return `<details class="dayc" ${(i===0||only)?'open':''}><summary><b>${dayName(k)}</b><span class="badge zero">${rows.length} غائب</span></summary>${rows.map(x=>`<div class="row ab">${avt(x.id)}<span>${esc(x.name)}</span><span class="t">غائب</span></div>`).join('')}</details>`;
+    }).join('');
+  }else{
+    const c={};
+    Object.keys(abs).filter(k=>!only||k===only).forEach(k=>abs[k].forEach(x=>{const e=c[x.id]=c[x.id]||{id:x.id,name:x.name,days:[]};e.days.push(k)}));
+    html=Object.values(c).filter(e=>!q||norm(e.name).includes(q)).sort((a,b)=>b.days.length-a.days.length).map(e=>
+      `<details class="dayc"><summary>${avt(e.id)}<b>${esc(e.name)}</b><span class="badge zero">${e.days.length} يوم غياب</span></summary>${e.days.sort().reverse().map(k=>`<div class="row ab"><span>${dayName(k)}</span><span class="t">غائب</span></div>`).join('')}</details>`).join('');
+  }
+  $('absOut').innerHTML=html||'<p class="mu">لا يوجد غائبون مسجلون حالياً.</p>';
+}
+const setV=v=>{absView=v;$('v-day').classList.toggle('on',v==='day');$('v-per').classList.toggle('on',v==='per');renderAbs()};
+$('v-day').onclick=()=>setV('day');$('v-per').onclick=()=>setV('per');
+$('q2').oninput=renderAbs;$('day2').onchange=renderAbs;
+$('all2').onclick=()=>{$('day2').value='';$('q2').value='';renderAbs()};
 function finalizeDays(){
   const today=dayKey(new Date());
   const ks=Object.keys(att).filter(k=>att[k].length).sort();
@@ -215,7 +249,7 @@ async function previewLoop(){
   }else if(cv.width)cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
   setTimeout(previewLoop,400);
 }
-async function init(){rebuild();finalizeDays();setInterval(()=>{finalizeDays();if(tab==='log')renderLog()},60000);loop();previewLoop();await startCam()}
+async function init(){rebuild();finalizeDays();setInterval(()=>{finalizeDays();if(tab==='log')renderLog();if(tab==='abs')renderAbs()},60000);loop();previewLoop();await startCam()}
 function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
 async function detect(){
   const v=$('v');
