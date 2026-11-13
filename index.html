@@ -63,9 +63,8 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
       <p class="mu">حاضرون اليوم: <b id="cnt">0</b></p>
     </div>
     <div class="pane" id="p-add">
-      <label>الاسم الكامل</label><input id="nm" placeholder="اسم الشخص">
-      <label>معلومات إضافية (رقم، صف، قسم...)</label><textarea id="inf" rows="2"></textarea>
-      <p class="mu">انظر إلى الكاميرا ثم اضغط الزر لالتقاط الصورة الأولى وحفظ البيانات.</p>
+      <label>الاسم الرباعي (أربعة أسماء فقط)</label><input id="nm" placeholder="مثال: محمد أحمد علي حسن">
+      <p class="mu">اكتب الاسم الرباعي ثم اضغط الزر وتابع التعليمات: سيُطلب منك النظر للكاميرا بتعابير مختلفة (ابتسامة، تعجب، إمالة الرأس) ليتعرف عليك الموقع بدقة في كل الحالات.</p>
       <button class="btn gr" id="save">التقاط الصورة وحفظ الشخص</button>
     </div>
     <div class="pane" id="p-log">
@@ -116,10 +115,17 @@ document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{
 
 const descs=p=>(Array.isArray(p.desc[0])?p.desc:[p.desc]).map(d=>new Float32Array(d));
 const dist=(a,b)=>Math.min(...descs(a).flatMap(x=>descs(b).map(y=>faceapi.euclideanDistance(x,y))));
+const MATCH=0.52;
+function identify(desc){
+  const r=people.map(p=>({p,d:Math.min(...descs(p).map(x=>faceapi.euclideanDistance(x,desc)))})).sort((a,b)=>a.d-b.d);
+  if(!r.length||r[0].d>=MATCH)return {p:null};
+  const other=r.slice(1).find(x=>dist(x.p,r[0].p)>=SAME); // أقرب شخص مختلف
+  if(other&&other.d-r[0].d<0.04)return {p:null};          // تشابه ملتبس: ارفض
+  return {p:r[0].p,d:r[0].d};
+}
 const SAME=0.55; // أقل من هذه المسافة = نفس الشخص
 function findDup(cand){let best=null,bd=9;people.forEach(p=>{const d=dist(cand,p);if(d<SAME&&d<bd){bd=d;best=p}});return best}
 function rebuild(){
-  matcher=people.length?new faceapi.FaceMatcher(people.map(p=>new faceapi.LabeledFaceDescriptors(p.id,descs(p))),0.5):null;
   $('cnt').textContent=(att[dayKey(new Date())]||[]).length;
 }
 
@@ -130,7 +136,7 @@ async function startCam(){
     setStatus('جارٍ تشغيل الكاميرا...');
     if(!modelsOk){
       await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri(MODELS),
+        faceapi.nets.ssdMobilenetv1.loadFromUri(MODELS),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODELS),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODELS)]);
       modelsOk=true;
@@ -150,26 +156,37 @@ function stopCam(){
 $('camBtn').onclick=()=>ready?stopCam():startCam();
 async function init(){rebuild();$('day').value=dayKey(new Date());loop();await startCam()}
 function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
-const detect=()=>faceapi.detectSingleFace($('v'),new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:.5})).withFaceLandmarks().withFaceDescriptor();
+const detect=()=>faceapi.detectSingleFace($('v'),new faceapi.SsdMobilenetv1Options({minConfidence:0.6})).withFaceLandmarks().withFaceDescriptor();
+const small=d=>d.detection.box.width/$('v').videoWidth<0.18; // الوجه بعيد جداً
 
 function showResult(html,err){const r=$('result');r.className=err?'err':'';r.innerHTML=html;r.style.display='block'}
 
+let cand=null,candN=0,unk=0;
 async function loop(){
   if(tab==='scan'&&!busy&&ready){
     busy=true;
     try{
       const d=await detect();
-      if(!d)setStatus('لا يوجد وجه ظاهر...');
-      else if(!matcher)setStatus('لا يوجد أشخاص مسجلون. أضف شخصاً أولاً.',true);
+      if(!d){cand=null;candN=0;unk=0;setStatus('لا يوجد وجه ظاهر...')}
+      else if(small(d)){cand=null;candN=0;setStatus('اقترب من الكاميرا قليلاً')}
+      else if(!people.length)setStatus('لا يوجد أشخاص مسجلون. أضف شخصاً أولاً.',true);
       else{
-        const m=matcher.findBestMatch(d.descriptor);
-        if(m.label==='unknown'){setStatus('وجه غير معروف');showResult('<h3>وجه غير معروف</h3><div class="mu">هذا الشخص غير مسجل في النظام</div>',true);await sleep(2500)}
-        else{await mark(people.find(p=>p.id===m.label));await sleep(4000)}
+        const m=identify(d.descriptor);
+        if(!m.p){
+          cand=null;candN=0;unk++;
+          if(unk>=3){unk=0;setStatus('وجه غير معروف');showResult('<h3>وجه غير معروف</h3><div class="mu">هذا الشخص غير مسجل في النظام</div>',true);await sleep(2500)}
+          else setStatus('جارٍ التحقق...');
+        }else{
+          unk=0;
+          if(cand===m.p.id)candN++;else{cand=m.p.id;candN=1}
+          if(candN>=2){await mark(m.p);cand=null;candN=0;await sleep(4000)}
+          else setStatus('جارٍ التحقق...');
+        }
       }
     }catch(e){}
     busy=false;
   }
-  setTimeout(loop,600);
+  setTimeout(loop,500);
 }
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 
@@ -184,30 +201,41 @@ async function mark(p){
 }
 
 // إضافة شخص
+const norm=t=>t.replace(/[\u064B-\u0652\u0640]/g,'').replace(/[أإآٱ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/\s+/g,' ').trim().toLowerCase();
+const STEPS=['انظر مباشرة للكاميرا بوجه عادي','ابتسم ابتسامة واسعة','افتح فمك قليلاً (تعجب)','أغمض عينيك ثم افتحهما','أمِل رأسك قليلاً لليمين','أمِل رأسك قليلاً لليسار'];
 $('save').onclick=async()=>{
-  const name=$('nm').value.trim();
-  if(!name)return alert('اكتب الاسم أولاً');
+  const name=$('nm').value.replace(/\s+/g,' ').trim();
+  const parts=name.split(' ');
+  if(parts.length!==4||!parts.every(w=>/^[\u0600-\u06FFa-zA-Z]{2,}$/.test(w)))return alert('اكتب الاسم الرباعي بشكل صحيح: أربعة أسماء بحروف فقط، مفصولة بمسافات.');
+  const same=people.find(p=>norm(p.name)===norm(name));
+  if(same){showResult(`<img src="${same.photo}"><h3>مرفوض: الاسم مسجل مسبقاً</h3><b>${esc(same.name)}</b><div class="mu">لا يمكن تكرار نفس الاسم الرباعي</div>`,true);setStatus('تم رفض الإضافة: الاسم مكرر',true);return}
   if(!ready)return alert('شغّل الكاميرا أولاً');
   const btn=$('save');btn.disabled=true;
   while(busy)await sleep(50);
   busy=true;
   try{
-    setStatus('ثبّت وجهك أمام الكاميرا... جارٍ التقاط الصورة');
-    const smp=[];
-    for(let t=0;t<10&&smp.length<3;t++){const d=await detect();if(d)smp.push(Array.from(d.descriptor));await sleep(350)}
-    if(smp.length<3){setStatus('لم يتم اكتشاف وجه واضح، حاول مجدداً',true);return}
-    const f=smp.map(a=>new Float32Array(a));
-    if(faceapi.euclideanDistance(f[0],f[1])>0.5||faceapi.euclideanDistance(f[0],f[2])>0.5){setStatus('الوجه غير ثابت، انظر للكاميرا مباشرة وحاول مجدداً',true);return}
+    const smp=[];let photo=null;
+    for(let k=0;k<STEPS.length;k++){
+      setStatus(`(${k+1}/${STEPS.length}) ${STEPS[k]}`);
+      await sleep(k===0?1200:2200);
+      let d=null;
+      for(let t=0;t<4&&!d;t++){const r=await detect();if(r&&!small(r))d=r;else await sleep(300)}
+      if(!d){setStatus('لم يتم اكتشاف وجه واضح، اقترب وحاول مجدداً',true);return}
+      if(k===0){
+        const c=document.createElement('canvas');c.width=240;c.height=180;
+        const x=c.getContext('2d');x.translate(240,0);x.scale(-1,1);x.drawImage($('v'),0,0,240,180);
+        photo=c.toDataURL('image/jpeg',.7);
+      }else if(faceapi.euclideanDistance(d.descriptor,new Float32Array(smp[0]))>0.6){setStatus('تغيّر الوجه أثناء الالتقاط، أعد المحاولة بشخص واحد أمام الكاميرا',true);return}
+      smp.push(Array.from(d.descriptor));
+    }
     const dup=findDup({desc:smp});
     if(dup){
-      showResult(`<img src="${dup.photo}"><h3>مرفوض: هذا الشخص مسجل مسبقاً</h3><b>${esc(dup.name)}</b><div class="mu">لا يمكن إضافة نفس الشخص مرتين</div>`,true);
+      showResult(`<img src="${dup.photo}"><h3>مرفوض: هذا الشخص مسجل مسبقاً</h3><b>${esc(dup.name)}</b><div class="mu">الوجه مطابق لشخص مسجل، لا يمكن إضافته مرتين</div>`,true);
       setStatus('تم رفض الإضافة: الوجه مسجل مسبقاً',true);return;
     }
-    const c=document.createElement('canvas');c.width=240;c.height=180;
-    const x=c.getContext('2d');x.translate(240,0);x.scale(-1,1);x.drawImage($('v'),0,0,240,180);
-    const p={id:'p'+Date.now(),name,info:$('inf').value.trim(),photo:c.toDataURL('image/jpeg',.7),desc:smp,added:new Date().toISOString()};
+    const p={id:'p'+Date.now(),name,photo,desc:smp,added:new Date().toISOString()};
     people.push(p);store('people',people);rebuild();
-    $('nm').value='';$('inf').value='';
+    $('nm').value='';
     showResult(`<img src="${p.photo}"><h3>تمت إضافة الشخص بنجاح ✔</h3><b>${esc(p.name)}</b>`);
     setStatus('تم حفظ '+name);
   }catch(e){setStatus('حدث خطأ أثناء الحفظ',true)}
@@ -228,7 +256,7 @@ $('csv').onclick=()=>{
 
 // الأشخاص
 function renderPeople(){
-  $('pplOut').innerHTML=people.length?'<table>'+people.map(p=>`<tr><td><img src="${p.photo}">${esc(p.name)}<div class="mu">${esc(p.info)}</div></td><td><button class="btn sm red" onclick="delP('${p.id}')">حذف</button></td></tr>`).join('')+'</table>':'<p class="mu">لا يوجد أشخاص مسجلون.</p>';
+  $('pplOut').innerHTML=people.length?'<table>'+people.map(p=>`<tr><td><img src="${p.photo}">${esc(p.name)}</td><td><button class="btn sm red" onclick="delP('${p.id}')">حذف</button></td></tr>`).join('')+'</table>':'<p class="mu">لا يوجد أشخاص مسجلون.</p>';
 }
 function delP(id){if(!confirm('حذف هذا الشخص؟ (سجلات حضوره السابقة تبقى)'))return;people=people.filter(p=>p.id!==id);store('people',people);rebuild();renderPeople()}
 
