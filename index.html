@@ -33,6 +33,16 @@ video{width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
 input,textarea{width:100%;padding:9px;margin:5px 0 10px;border:1px solid var(--bd);border-radius:8px;background:var(--bg);color:var(--tx);font-family:inherit}
 .btn{padding:10px 14px;border:0;border-radius:8px;background:var(--pr);color:#fff;cursor:pointer;font-family:inherit;width:100%}
 .btn.sm{width:auto;padding:5px 10px;font-size:13px}.btn.red{background:var(--er)}.btn.gr{background:var(--ok)}
+#logOut::-webkit-scrollbar{width:6px}
+.dayc{border:1px solid var(--bd);border-radius:10px;margin:8px 0;overflow:hidden;background:var(--card)}
+.dayc>summary{padding:11px;cursor:pointer;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:15px}
+.badge{background:rgba(22,163,74,.15);color:var(--ok);padding:2px 9px;border-radius:99px;font-size:12px}
+.badge.zero{background:rgba(220,38,38,.12);color:var(--er)}
+.row{display:flex;align-items:center;gap:10px;padding:8px 11px;border-top:1px solid var(--bd)}
+.row img{width:40px;height:40px;border-radius:50%;object-fit:cover}
+.row .t{margin-inline-start:auto;font-weight:bold;color:var(--ok);white-space:nowrap}
+.row.ab .t{color:var(--er)}
+.dayc .btn.sm{margin:8px 11px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th,td{padding:8px;border-bottom:1px solid var(--bd);text-align:right}
 td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:middle;margin-left:6px}
@@ -70,9 +80,9 @@ td img{width:36px;height:36px;border-radius:50%;object-fit:cover;vertical-align:
       
     </div>
     <div class="pane" id="p-log">
-      <label>اختر اليوم</label><input type="date" id="day">
-      <div id="logOut"></div>
-      <button class="btn sm" id="csv" style="margin-top:10px">تصدير CSV لهذا اليوم</button>
+      <input id="q" placeholder="🔍 ابحث بالاسم...">
+      <div style="display:flex;gap:8px;align-items:center"><input type="date" id="day" style="margin:0" title="اختر يوماً"><button class="btn sm" id="all">كل الأيام</button></div>
+      <div id="logOut" style="max-height:62vh;overflow:auto;margin-top:10px"></div>
     </div>
     <div class="pane" id="p-ppl"><div id="pplOut"></div>
       <div style="display:flex;gap:8px;margin-top:12px">
@@ -187,7 +197,7 @@ async function previewLoop(){
   }else if(cv.width)cv.getContext('2d').clearRect(0,0,cv.width,cv.height);
   setTimeout(previewLoop,400);
 }
-async function init(){rebuild();$('day').value=dayKey(new Date());loop();previewLoop();await startCam()}
+async function init(){rebuild();loop();previewLoop();await startCam()}
 function setStatus(t,e){$('status').textContent=t;$('status').style.color=e?'var(--er)':'var(--mu)'}
 async function detect(){
   const v=$('v');
@@ -293,16 +303,37 @@ $('save').onclick=async()=>{
 };
 
 // السجل
+const dayName=k=>new Date(k+'T00:00:00').toLocaleDateString('ar-IQ',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+const nm2=k=>(people.find(x=>x.id===k)||{name:'(محذوف)',photo:''});
 function renderLog(){
-  const k=$('day').value,list=att[k]||[];
-  $('logOut').innerHTML=list.length?`<p class="mu">عدد الحاضرين: ${list.length} من ${people.length}</p><table><tr><th>الاسم</th><th>الوقت</th></tr>`+
-    list.map(a=>{const p=people.find(x=>x.id===a.id)||{name:'(محذوف)',photo:''};return `<tr><td>${p.photo?`<img src="${p.photo}">`:''}${esc(p.name)}</td><td>${t12(a.time)}</td></tr>`}).join('')+'</table>':'<p class="mu">لا توجد سجلات في هذا اليوم.</p>';
+  const only=$('day').value,q=norm($('q').value||''),today=dayKey(new Date());
+  const keys=only?[only]:Array.from(new Set([today,...Object.keys(att).filter(k=>att[k].length)])).sort().reverse();
+  const out=keys.map((k,i)=>{
+    const list=(att[k]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time));
+    const rows=list.filter(a=>!q||norm(nm2(a.id).name).includes(q));
+    if(q&&!rows.length)return '';
+    const here=new Set(list.map(a=>a.id));
+    const absent=people.filter(p=>!here.has(p.id)&&(!p.added||dayKey(new Date(p.added))<=k)&&(!q||norm(p.name).includes(q)));
+    const total=list.length+people.filter(p=>!here.has(p.id)&&(!p.added||dayKey(new Date(p.added))<=k)).length;
+    return `<details class="dayc" ${(i===0||only)?'open':''}>
+      <summary><b>${dayName(k)}${k===today?' (اليوم)':''}</b><span class="badge ${list.length?'':'zero'}">حضر ${list.length} من ${total}</span></summary>
+      ${rows.map(a=>{const p=nm2(a.id);return `<div class="row">${p.photo?`<img src="${p.photo}">`:''}<span>${esc(p.name)}</span><span class="t">${t12(a.time)}</span></div>`}).join('')||'<div class="row mu">لا يوجد حاضرون في هذا اليوم</div>'}
+      ${absent.length?`<details><summary class="mu" style="padding:9px 11px;cursor:pointer;border-top:1px solid var(--bd)">الغائبون (${absent.length})</summary>${absent.map(p=>`<div class="row ab"><img src="${p.photo}"><span>${esc(p.name)}</span><span class="t">غائب</span></div>`).join('')}</details>`:''}
+      <button class="btn sm" onclick="csvDay('${k}')">تصدير CSV لهذا اليوم</button>
+    </details>`;
+  }).join('');
+  $('logOut').innerHTML=out||'<p class="mu">لا توجد سجلات.</p>';
 }
-$('day').onchange=renderLog;
-$('csv').onclick=()=>{
-  const k=$('day').value,rows=['الاسم,الوقت,التاريخ'].concat((att[k]||[]).map(a=>{const p=people.find(x=>x.id===a.id)||{name:''};return `"${p.name.replace(/"/g,'""')}",${t12(a.time)},${k}`}));
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));a.download='attendance-'+k+'.csv';a.click();
-};
+$('day').onchange=renderLog;$('q').oninput=renderLog;
+$('all').onclick=()=>{$('day').value='';$('q').value='';renderLog()};
+function csvDay(k){
+  const rows=['الاسم,الحالة,الوقت,التاريخ'];
+  const here=new Set((att[k]||[]).map(a=>a.id));
+  (att[k]||[]).slice().sort((a,b)=>a.time.localeCompare(b.time)).forEach(a=>rows.push(`"${nm2(a.id).name.replace(/"/g,'""')}",حاضر,${t12(a.time)},${k}`));
+  people.filter(p=>!here.has(p.id)&&(!p.added||dayKey(new Date(p.added))<=k)).forEach(p=>rows.push(`"${p.name.replace(/"/g,'""')}",غائب,,${k}`));
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['\ufeff'+rows.join('\n')],{type:'text/csv'}));
+  a.download='attendance-'+k+'.csv';a.click();
+}
 
 // الأشخاص
 function renderPeople(){
